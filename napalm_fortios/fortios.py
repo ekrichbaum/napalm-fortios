@@ -11,10 +11,102 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under
 # the License.
-import socket
+import socket,sys,easysnmp,time,re,json,pprint
 
 from fortiosapi import FortiOSAPI
 from napalm.base.base import NetworkDriver
+
+def intfix(i):
+    return int(i) if i.isdigit() else 0
+
+def meter_fortigate(host,community):
+    data = {}
+    try:
+        snmp = easysnmp.Session(hostname=host,community=community,version=2)
+
+        total_sys_cpu = snmp.get('.1.3.6.1.4.1.12356.101.4.1.3.0').value
+        cpu_type_tr = {'.1.3.6.1.4.1.12356.101.4.4.3.2':'cpu','.1.3.6.1.4.1.12356.101.4.4.3.8':'npu',
+               'SNMPv2-SMI::enterprises.12356.101.4.4.3.2':'cpu','SNMPv2-SMI::enterprises.12356.101.4.4.3.8':'npu',}
+
+        cpus = {}
+        npu_id = 0
+        for cpu_obj in snmp.bulkwalk('.1.3.6.1.4.1.12356.101.4.4.2.1.4'):
+            idx = int(cpu_obj.oid.split('.')[-1])
+            cpu_type = cpu_type_tr.get(cpu_obj.value,'cpu')
+            if not idx in cpus:
+                cpus[idx] = {}
+            if cpu_type == 'cpu':
+                cpu_name = f"{cpu_type}{idx}"
+            else:
+                cpu_name = f"{cpu_type}{npu_id}"
+                npu_id +=1
+            cpus[idx] = {'name':cpu_name}
+
+        for cpu_usage_obj in snmp.bulkwalk('.1.3.6.1.4.1.12356.101.4.4.2.1.2'):
+            idx = int(cpu_usage_obj.oid.split('.')[-1])
+
+            val = int(cpu_usage_obj.value)
+            if idx in cpus:
+                cpus[idx]['%usage'] = val
+
+        cpus_results = {}
+        for c in cpus.values():
+            cpus_results[c['name']] = {'%usage':c['%usage']}
+
+        data['cpu'] = cpus_results
+
+        total_used_pr= intfix(snmp.get('.1.3.6.1.4.1.12356.101.4.1.4.0').value)
+        mem_total = intfix(snmp.get('.1.3.6.1.4.1.12356.101.4.1.5.0').value)
+        mem_used  = int(float(mem_total) * total_used_pr/100.0)
+
+        data['memory'] = {"available_ram":mem_total,"used_ram":mem_used}
+
+        pp = pprint.PrettyPrinter(indent=1)
+        with open('/home/netbox/netbox-debug.log','w') as File:
+            File.write(pp.pformat(data['memory']))
+
+        environs = {}
+        for obj in snmp.bulkwalk('.1.3.6.1.4.1.12356.101.4.3.2.1.2'):
+            name = obj.value
+            idx = int(obj.oid.split('.')[-1])
+            environs[idx] = {"name":name}
+        for obj in snmp.bulkwalk('.1.3.6.1.4.1.12356.101.4.3.2.1.3'):
+            val = obj.value
+            idx = int(obj.oid.split('.')[-1])
+            if idx in environs:
+                environs[idx]['value'] = val
+
+        temps = {}
+        fans = {}
+        power = {}
+        for i in environs.values():
+            name = i['name']
+            value = i['value']
+            if 'Temp' in name or 'CPU Core' in name:
+                temps[name] = {"temperature":value}
+            if 'Fan' in name:
+                boo = 'False'
+                if int(value) > 0:
+                    boo = 'True'
+                fans[name] = {"status":boo}
+            if 'VIN' in name or 'VOUT' in name:
+                boo = 'False'
+                if float(value) > 0:
+                    boo = 'True'
+                power[name] = {"status":boo}
+
+        data=json.dumps(
+                  {"cpu":cpus_results,
+                   "memory":{"available_ram":mem_total,"used_ram":mem_used},
+                   "fans":fans,
+                   "temperature":temps,
+                   "power":power,
+                    })
+
+    except Exception as e:
+        print(e)
+    finally:
+        return data
 
 
 class FortiOSDriver(NetworkDriver):
@@ -165,3 +257,24 @@ class FortiOSDriver(NetworkDriver):
                 }]
                 position += 1
         return firewall_policies
+
+    def get_config(self, retrieve="all", full=False, sanitized=False):
+        """Implementation of get_config for FortiOS.
+        Returns the running configuration as dictionary.
+        The startup and candidate is always empty string.
+        https://community.fortinet.com/t5/FortiGate/Technical-Tip-Get-backup-config-file-on-FortiGate-using-RestAPI/ta-p/202286
+        """
+        params = {
+            'scope': 'global'
+        }
+        return {
+            "running": self.device.download('system', 'config', vdom=self.vdom,mkey="backup", parameters=params).text,
+            "startup": "",
+            "candidate": ""
+        }
+
+    def get_environment(self):
+        import subprocess,json
+        p=meter_fortigate(self.hostname,self.community)
+        enviro = json.loads(p)
+        return enviro
