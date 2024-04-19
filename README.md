@@ -1,5 +1,7 @@
 # NAPALM driver for fortios
 
+Modified to add get_config and get_environment for use with netbox.
+
 This is a [NAPALM](https://napalm.readthedocs.io/en/latest/) driver for fortios (fortigate) using rest API to be able, for now, retrieving some information like:
 
 - interfaces
@@ -8,10 +10,10 @@ This is a [NAPALM](https://napalm.readthedocs.io/en/latest/) driver for fortios 
 
 ## Install
 
-There is no PyPi repo has Orange didn't set up anything for now, to install use command line:
+There is no PyPi repo and original author went stale, to install use command line:
 
 ```shell
-pip install git+https://github.com/orange-cloudfoundry/napalm-fortios.git@<release version>
+pip install git+https://github.com/ekrichbaum/napalm-fortios.git@<release version>
 ```
 
 ## Usage
