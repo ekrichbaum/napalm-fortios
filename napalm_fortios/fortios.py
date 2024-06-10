@@ -116,6 +116,9 @@ class FortiOSDriver(NetworkDriver):
         self.password = password
         self.timeout = timeout
 
+        self.community = optional_args.get('community', 'public')
+        self.port = optional_args.get('port', 22)
+
         if optional_args is not None:
             self.vdom = optional_args.get('fortios_vdom', None)
         else:
